@@ -3,7 +3,7 @@ from io import BytesIO
 from fastapi import FastAPI, Response, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
-from PIL import Image, ImageDraw
+from PIL import Image
 import asyncio
 import time
 
@@ -20,21 +20,24 @@ API_KEY = "ziko"
 BACKGROUND_FILENAME = "outfit.png"
 IMAGE_TIMEOUT = 6.0
 PLAYER_INFO_URL = "https://sheihk-anamul-info-ob53.vercel.app/player-info"
-# تغيير API الأيقونات إلى الذي كان يعمل سابقاً
-ICON_API_BASE = "https://mafu-icon-api.onrender.com/icon?key=MAFU&item_id="
+# استخدام API الأيقونات الأصلي الذي كان يعمل في الكود القديم
+ICON_API_BASE = "https://iconapi.wasmer.app/"
 
+# نفس المواضيع التي كانت في الكود القديم (8 مواقع)
 POSITIONS = [
     (350, 30), (575, 130), (665, 350),
     (575, 550), (350, 654), (135, 570),
     (47, 340), (135, 130)
 ]
 
-client = httpx.AsyncClient(timeout=httpx.Timeout(IMAGE_TIMEOUT),
-                           limits=httpx.Limits(max_keepalive_connections=20),
-                           follow_redirects=True)
+client = httpx.AsyncClient(
+    timeout=httpx.Timeout(IMAGE_TIMEOUT),
+    limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+    follow_redirects=True
+)
 
 image_cache = {}
-CACHE_TTL = 300
+CACHE_TTL = 300  # 5 دقائق
 
 async def fetch_image_cached(item_id):
     if not item_id:
@@ -53,20 +56,16 @@ async def fetch_image_cached(item_id):
         img = img.resize((150, 150), Image.LANCZOS)
         image_cache[cache_key] = {"img": img, "ts": now}
         return img
-    except Exception as e:
-        # إنشاء صورة وهمية ملونة للاختبار (تظهر باللون الأحمر)
-        img = Image.new('RGBA', (150, 150), (255, 0, 0, 200))
-        draw = ImageDraw.Draw(img)
-        draw.text((10, 10), f"Fail:{item_id}", fill="white")
-        image_cache[cache_key] = {"img": img, "ts": now}
-        return img
+    except Exception:
+        image_cache[cache_key] = {"img": None, "ts": now}
+        return None
 
 async def fetch_player_info(uid):
     try:
         resp = await client.get(f"{PLAYER_INFO_URL}?uid={uid}")
         resp.raise_for_status()
         return resp.json()
-    except Exception as e:
+    except Exception:
         return None
 
 def load_background():
@@ -78,24 +77,10 @@ background = load_background()
 
 @app.get("/")
 async def home():
-    return {"status": "ok", "message": "Ziko Outfit API (debug enabled)"}
-
-@app.get("/debug")
-async def debug(uid: str = Query(...), key: str = Query(...)):
-    if key != API_KEY:
-        raise HTTPException(401, "Invalid key")
-    data = await fetch_player_info(uid)
-    if not data:
-        return {"error": "no data"}
-    outfit_ids = data.get("profileInfo", {}).get("clothes", [])[:6]
-    pet_id = data.get("petInfo", {}).get("id")
-    weapon_list = data.get("basicInfo", {}).get("weaponSkinShows", [])
-    weapon_id = weapon_list[0] if weapon_list else None
     return {
-        "outfit_ids": outfit_ids,
-        "pet_id": pet_id,
-        "weapon_id": weapon_id,
-        "all_keys": list(data.keys())  # لمعرفة الحقول المتاحة
+        "status": "running",
+        "message": "Ziko Outfit API (Fast & Working)",
+        "usage": "/ziko-outfit-image?key=ziko&uid=YOUR_UID"
     }
 
 @app.get("/ziko-outfit-image")
@@ -107,6 +92,7 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     if not data:
         raise HTTPException(500, "Player info fetch failed")
 
+    # استخراج العناصر بنفس طريقة الكود القديم
     outfit_ids = data.get("profileInfo", {}).get("clothes", [])[:6]
     pet_id = data.get("petInfo", {}).get("id")
     weapon_list = data.get("basicInfo", {}).get("weaponSkinShows", [])
@@ -123,7 +109,7 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
 
     canvas = background.copy()
     for idx, img in enumerate(images):
-        if img and idx < len(POSITIONS):
+        if img is not None and idx < len(POSITIONS):
             canvas.paste(img, POSITIONS[idx], img)
 
     output = BytesIO()
