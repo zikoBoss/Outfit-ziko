@@ -8,13 +8,7 @@ import asyncio
 import time
 
 app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 API_KEY = "ziko"
 BACKGROUND_FILENAME = "outfit.png"
@@ -22,28 +16,30 @@ IMAGE_TIMEOUT = 8.0
 PLAYER_INFO_URL = "https://sheihk-anamul-info-ob53.vercel.app/player-info"
 ICON_API_BASE = "https://iconapi.wasmer.app/"
 
-# المواضع الثمانية (يمكنك تعديلها)
+# البادئات المطلوبة للملابس (من الكود الأقدم)
+REQUIRED_STARTS = ["211", "214", "208", "203", "204", "205", "212"]
+FALLBACK_IDS = ["211000000", "214000000", "208000000", "203000000", "204000000", "205000000", "212000000"]
+
+# المواضع الثمانية (6 للملابس + 1 للحيوان + 1 للسلاح)
 POSITIONS = [
-    (350, 30),    # 1. قطعة ملابس
-    (575, 130),   # 2. قطعة ملابس
-    (665, 350),   # 3. قطعة ملابس
-    (575, 550),   # 4. قطعة ملابس
-    (350, 654),   # 5. قطعة ملابس
-    (135, 570),   # 6. قطعة ملابس
-    (47, 340),    # 7. الحيوان الأليف (pet)
-    (135, 130)    # 8. السلاح
+    (350, 30),    # 1. head (211)
+    (575, 130),   # 2. faceprint (214)
+    (665, 350),   # 3. mask (208)
+    (575, 550),   # 4. top (203)
+    (350, 654),   # 5. bottom (204)
+    (135, 570),   # 6. shoe (205)
+    (47, 340),    # 7. pet
+    (135, 130)    # 8. weapon
 ]
 
-client = httpx.AsyncClient(
-    timeout=httpx.Timeout(IMAGE_TIMEOUT),
-    limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
-    follow_redirects=True
-)
+client = httpx.AsyncClient(timeout=httpx.Timeout(IMAGE_TIMEOUT),
+                           limits=httpx.Limits(max_keepalive_connections=20),
+                           follow_redirects=True)
 
 image_cache = {}
 CACHE_TTL = 300
 
-async def fetch_image_cached(item_id):
+async def fetch_image_cached(item_id, size=(150, 150)):
     if not item_id:
         return None
     now = time.time()
@@ -55,10 +51,10 @@ async def fetch_image_cached(item_id):
         resp = await client.get(url)
         resp.raise_for_status()
         img = Image.open(BytesIO(resp.content)).convert("RGBA")
-        img = img.resize((150, 150), Image.LANCZOS)
+        img = img.resize(size, Image.LANCZOS)
         image_cache[key] = {"img": img, "ts": now}
         return img
-    except Exception:
+    except:
         image_cache[key] = {"img": None, "ts": now}
         return None
 
@@ -67,7 +63,7 @@ async def fetch_player_info(uid):
         resp = await client.get(f"{PLAYER_INFO_URL}?uid={uid}")
         resp.raise_for_status()
         return resp.json()
-    except Exception:
+    except:
         return None
 
 def load_background():
@@ -78,11 +74,7 @@ background = load_background()
 
 @app.get("/")
 async def home():
-    return {
-        "status": "running",
-        "message": "Ziko Outfit API - Fixed pet image",
-        "usage": "/ziko-outfit-image?key=ziko&uid=YOUR_UID"
-    }
+    return {"message": "Ziko Outfit API (Fast & Reliable)", "usage": "/ziko-outfit-image?key=ziko&uid=UID"}
 
 @app.get("/ziko-outfit-image")
 async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
@@ -93,28 +85,34 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     if not data:
         raise HTTPException(500, "Player info fetch failed")
 
-    profile_info = data.get("profileInfo", {})
-    basic_info = data.get("basicInfo", {})
+    # استخراج قطع الملابس باستخدام البادئات (من الكود الأقدم)
+    outfit_ids = data.get("profileInfo", {}).get("clothes", [])
+    used_ids = set()
+    selected_clothes = []
+
+    for idx, code in enumerate(REQUIRED_STARTS[:6]):  # نأخذ أول 6 بادئات فقط
+        matched = None
+        for oid in outfit_ids:
+            str_oid = str(oid)
+            if str_oid.startswith(code) and str_oid not in used_ids:
+                matched = str_oid
+                used_ids.add(str_oid)
+                break
+        if matched is None:
+            matched = FALLBACK_IDS[idx]
+        selected_clothes.append(matched)
+
+    # الحيوان الأليف (يفضل skinId)
     pet_info = data.get("petInfo", {})
+    pet_id = pet_info.get("skinId") or pet_info.get("id")
 
-    # 1. قطع الملابس (أول 6)
-    clothes_ids = profile_info.get("clothes", [])[:6]
-
-    # 2. الحيوان الأليف: نفضل skinId، فإن لم يوجد نستخدم id
-    pet_skin_id = pet_info.get("skinId")
-    pet_id = pet_info.get("id")
-    pet_final_id = pet_skin_id if pet_skin_id else pet_id
-
-    # 3. السلاح
-    weapon_list = basic_info.get("weaponSkinShows", [])
+    # السلاح
+    weapon_list = data.get("basicInfo", {}).get("weaponSkinShows", [])
     weapon_id = weapon_list[0] if weapon_list else None
 
-    # بناء قائمة المعرفات بالترتيب
-    item_ids = list(clothes_ids)           # 6 عناصر
-    item_ids.append(pet_final_id)          # العنصر السابع (pet)
-    item_ids.append(weapon_id)             # العنصر الثامن (weapon)
-
-    # التأكد من الطول 8
+    # قائمة جميع المعرفات (6 ملابس + حيوان + سلاح)
+    item_ids = selected_clothes + [pet_id, weapon_id]
+    # التأكد من العدد 8
     while len(item_ids) < 8:
         item_ids.append(None)
 
@@ -125,7 +123,7 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     # رسم اللوحة
     canvas = background.copy()
     for idx, img in enumerate(images):
-        if img is not None and idx < len(POSITIONS):
+        if img and idx < len(POSITIONS):
             canvas.paste(img, POSITIONS[idx], img)
 
     output = BytesIO()
@@ -134,18 +132,6 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     return Response(content=output.getvalue(), media_type="image/png",
                     headers={"Cache-Control": "public, max-age=300"})
 
-@app.get("/debug-pet")
-async def debug_pet(uid: str = Query(...), key: str = Query(...)):
-    """نقطة اختبار لمعرفة معرفات الحيوان الأليف"""
-    if key != API_KEY:
-        raise HTTPException(401, "Invalid key")
-    data = await fetch_player_info(uid)
-    if not data:
-        return {"error": "no data"}
-    pet_info = data.get("petInfo", {})
-    return {
-        "pet_id": pet_info.get("id"),
-        "pet_skinId": pet_info.get("skinId"),
-        "pet_level": pet_info.get("level"),
-        "final_used": pet_info.get("skinId") or pet_info.get("id")
-    }
+@app.on_event("shutdown")
+async def shutdown():
+    await client.aclose()
