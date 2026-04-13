@@ -22,16 +22,17 @@ IMAGE_TIMEOUT = 8.0
 PLAYER_INFO_URL = "https://sheihk-anamul-info-ob53.vercel.app/player-info"
 ICON_API_BASE = "https://iconapi.wasmer.app/"
 
-# المواضع الثمانية الصحيحة (تم جمعها من الكود الذي كان يعمل سابقاً)
+# المواضع الثمانية الصحيحة (بنفس إحداثيات الكود الذي كان يعمل سابقاً)
+# يمكنك تعديل هذه القيم بسهولة
 POSITIONS = [
-    (350, 30),    # 1. head
-    (575, 130),   # 2. faceprint
-    (665, 350),   # 3. mask
-    (575, 550),   # 4. top
-    (350, 654),   # 5. bottom
-    (135, 570),   # 6. shoe
-    (47, 340),    # 7. pet (أو أي عنصر إضافي)
-    (135, 130)    # 8. weapon
+    (350, 30),    # 1. قطعة ملابس 1 (head)
+    (575, 130),   # 2. قطعة ملابس 2 (faceprint)
+    (665, 350),   # 3. قطعة ملابس 3 (mask)
+    (575, 550),   # 4. قطعة ملابس 4 (top)
+    (350, 654),   # 5. قطعة ملابس 5 (bottom)
+    (135, 570),   # 6. قطعة ملابس 6 (shoe)
+    (47, 340),    # 7. الحيوان الأليف (pet)
+    (135, 130)    # 8. السلاح (weapon)
 ]
 
 client = httpx.AsyncClient(
@@ -59,6 +60,7 @@ async def fetch_image_cached(item_id):
         image_cache[key] = {"img": img, "ts": now}
         return img
     except Exception:
+        # إذا فشل الجلب، نضع None ولا نضيف للcache سلبي لفترة قصيرة
         image_cache[key] = {"img": None, "ts": now}
         return None
 
@@ -75,13 +77,16 @@ def load_background():
     return Image.open(bg_path).convert("RGBA")
 
 background = load_background()
+# نستخدم أبعاد الخلفية الأصلية دون تغيير
+canvas_width, canvas_height = background.size
 
 @app.get("/")
 async def home():
     return {
         "status": "running",
-        "message": "Ziko Outfit API - 8 items (Fast&m9awed & Reliable)",
-        "usage": "/ziko-outfit-image?key=ziko&uid=YOUR_UID"
+        "message": "Ziko Outfit API - 8 items (Clothes + Pet + Weapon)",
+        "usage": "/ziko-outfit-image?key=ziko&uid=YOUR_UID",
+        "note": f"Canvas size: {canvas_width}x{canvas_height}"
     }
 
 @app.get("/ziko-outfit-image")
@@ -93,18 +98,27 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     if not data:
         raise HTTPException(500, "Player info fetch failed")
 
-    # استخراج 6 قطع أولى من clothes
-    outfit_ids = data.get("profileInfo", {}).get("clothes", [])[:6]
-    pet_id = data.get("petInfo", {}).get("id")
-    weapon_list = data.get("basicInfo", {}).get("weaponSkinShows", [])
+    # استخراج البيانات حسب الـ JSON المقدم
+    profile_info = data.get("profileInfo", {})
+    basic_info = data.get("basicInfo", {})
+    pet_info = data.get("petInfo", {})
+
+    # 1. قطع الملابس (أول 6 عناصر من clothes)
+    clothes_ids = profile_info.get("clothes", [])[:6]
+    
+    # 2. الحيوان الأليف
+    pet_id = pet_info.get("id")
+    
+    # 3. السلاح (أول عنصر من weaponSkinShows)
+    weapon_list = basic_info.get("weaponSkinShows", [])
     weapon_id = weapon_list[0] if weapon_list else None
 
-    # بناء قائمة بـ 8 معرفات (قد يكون بعضها None)
-    item_ids = list(outfit_ids)  # أول 6
-    item_ids.append(pet_id)      # السابع
-    item_ids.append(weapon_id)   # الثامن
+    # بناء قائمة المعرفات بالترتيب: 6 ملابس + حيوان + سلاح
+    item_ids = list(clothes_ids)  # 6 عناصر
+    item_ids.append(pet_id)       # العنصر السابع
+    item_ids.append(weapon_id)    # العنصر الثامن
 
-    # التأكد من وجود 8 عناصر (ملء None إذا نقص)
+    # التأكد من العدد 8 (قد يكون pet أو weapon None)
     while len(item_ids) < 8:
         item_ids.append(None)
 
@@ -112,7 +126,7 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     tasks = [fetch_image_cached(iid) for iid in item_ids]
     images = await asyncio.gather(*tasks)
 
-    # إنشاء اللوحة
+    # نسخ الخلفية
     canvas = background.copy()
 
     # لصق الصور في المواضع المحددة
@@ -120,11 +134,15 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
         if img is not None and idx < len(POSITIONS):
             canvas.paste(img, POSITIONS[idx], img)
 
+    # إخراج الصورة بنفس أبعاد الخلفية الأصلية
     output = BytesIO()
     canvas.save(output, format="PNG", optimize=True)
     output.seek(0)
-    return Response(content=output.getvalue(), media_type="image/png",
-                    headers={"Cache-Control": "public, max-age=300"})
+    return Response(
+        content=output.getvalue(),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"}
+    )
 
 @app.on_event("shutdown")
 async def shutdown():
