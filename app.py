@@ -22,17 +22,16 @@ IMAGE_TIMEOUT = 8.0
 PLAYER_INFO_URL = "https://sheihk-anamul-info-ob53.vercel.app/player-info"
 ICON_API_BASE = "https://iconapi.wasmer.app/"
 
-# المواضع الثمانية الصحيحة (بنفس إحداثيات الكود الذي كان يعمل سابقاً)
-# يمكنك تعديل هذه القيم بسهولة
+# المواضع الثمانية (يمكنك تعديلها)
 POSITIONS = [
-    (350, 30),    # 1. قطعة ملابس 1 (head)
-    (575, 130),   # 2. قطعة ملابس 2 (faceprint)
-    (665, 350),   # 3. قطعة ملابس 3 (mask)
-    (575, 550),   # 4. قطعة ملابس 4 (top)
-    (350, 654),   # 5. قطعة ملابس 5 (bottom)
-    (135, 570),   # 6. قطعة ملابس 6 (shoe)
+    (350, 30),    # 1. قطعة ملابس
+    (575, 130),   # 2. قطعة ملابس
+    (665, 350),   # 3. قطعة ملابس
+    (575, 550),   # 4. قطعة ملابس
+    (350, 654),   # 5. قطعة ملابس
+    (135, 570),   # 6. قطعة ملابس
     (47, 340),    # 7. الحيوان الأليف (pet)
-    (135, 130)    # 8. السلاح (weapon)
+    (135, 130)    # 8. السلاح
 ]
 
 client = httpx.AsyncClient(
@@ -60,7 +59,6 @@ async def fetch_image_cached(item_id):
         image_cache[key] = {"img": img, "ts": now}
         return img
     except Exception:
-        # إذا فشل الجلب، نضع None ولا نضيف للcache سلبي لفترة قصيرة
         image_cache[key] = {"img": None, "ts": now}
         return None
 
@@ -77,16 +75,13 @@ def load_background():
     return Image.open(bg_path).convert("RGBA")
 
 background = load_background()
-# نستخدم أبعاد الخلفية الأصلية دون تغيير
-canvas_width, canvas_height = background.size
 
 @app.get("/")
 async def home():
     return {
         "status": "running",
-        "message": "Ziko Outfit API - 8 items (Clothes + Pet + Weapon)",
-        "usage": "/ziko-outfit-image?key=ziko&uid=YOUR_UID",
-        "note": f"Canvas size: {canvas_width}x{canvas_height}"
+        "message": "Ziko Outfit API - Fixed pet image",
+        "usage": "/ziko-outfit-image?key=ziko&uid=YOUR_UID"
     }
 
 @app.get("/ziko-outfit-image")
@@ -98,27 +93,28 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     if not data:
         raise HTTPException(500, "Player info fetch failed")
 
-    # استخراج البيانات حسب الـ JSON المقدم
     profile_info = data.get("profileInfo", {})
     basic_info = data.get("basicInfo", {})
     pet_info = data.get("petInfo", {})
 
-    # 1. قطع الملابس (أول 6 عناصر من clothes)
+    # 1. قطع الملابس (أول 6)
     clothes_ids = profile_info.get("clothes", [])[:6]
-    
-    # 2. الحيوان الأليف
+
+    # 2. الحيوان الأليف: نفضل skinId، فإن لم يوجد نستخدم id
+    pet_skin_id = pet_info.get("skinId")
     pet_id = pet_info.get("id")
-    
-    # 3. السلاح (أول عنصر من weaponSkinShows)
+    pet_final_id = pet_skin_id if pet_skin_id else pet_id
+
+    # 3. السلاح
     weapon_list = basic_info.get("weaponSkinShows", [])
     weapon_id = weapon_list[0] if weapon_list else None
 
-    # بناء قائمة المعرفات بالترتيب: 6 ملابس + حيوان + سلاح
-    item_ids = list(clothes_ids)  # 6 عناصر
-    item_ids.append(pet_id)       # العنصر السابع
-    item_ids.append(weapon_id)    # العنصر الثامن
+    # بناء قائمة المعرفات بالترتيب
+    item_ids = list(clothes_ids)           # 6 عناصر
+    item_ids.append(pet_final_id)          # العنصر السابع (pet)
+    item_ids.append(weapon_id)             # العنصر الثامن (weapon)
 
-    # التأكد من العدد 8 (قد يكون pet أو weapon None)
+    # التأكد من الطول 8
     while len(item_ids) < 8:
         item_ids.append(None)
 
@@ -126,24 +122,30 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     tasks = [fetch_image_cached(iid) for iid in item_ids]
     images = await asyncio.gather(*tasks)
 
-    # نسخ الخلفية
+    # رسم اللوحة
     canvas = background.copy()
-
-    # لصق الصور في المواضع المحددة
     for idx, img in enumerate(images):
         if img is not None and idx < len(POSITIONS):
             canvas.paste(img, POSITIONS[idx], img)
 
-    # إخراج الصورة بنفس أبعاد الخلفية الأصلية
     output = BytesIO()
     canvas.save(output, format="PNG", optimize=True)
     output.seek(0)
-    return Response(
-        content=output.getvalue(),
-        media_type="image/png",
-        headers={"Cache-Control": "public, max-age=300"}
-    )
+    return Response(content=output.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=300"})
 
-@app.on_event("shutdown")
-async def shutdown():
-    await client.aclose()
+@app.get("/debug-pet")
+async def debug_pet(uid: str = Query(...), key: str = Query(...)):
+    """نقطة اختبار لمعرفة معرفات الحيوان الأليف"""
+    if key != API_KEY:
+        raise HTTPException(401, "Invalid key")
+    data = await fetch_player_info(uid)
+    if not data:
+        return {"error": "no data"}
+    pet_info = data.get("petInfo", {})
+    return {
+        "pet_id": pet_info.get("id"),
+        "pet_skinId": pet_info.get("skinId"),
+        "pet_level": pet_info.get("level"),
+        "final_used": pet_info.get("skinId") or pet_info.get("id")
+    }
