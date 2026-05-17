@@ -18,7 +18,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 API_KEY = "ziko"
 BACKGROUND_FILENAME = "outfit.png"
 IMAGE_TIMEOUT = 20.0  # مهلة أطول
-PLAYER_INFO_URL = "http://203.57.85.58:2035/player-info"
+PLAYER_INFO_URL = "https://ajay-new-all-region-info-api.vercel.app/ajay-info"
 ICON_API_BASE = "https://iconapi.wasmer.app/"
 
 # 6 بادئات للملابس (تم تقليصها لتتناسب مع 6 مواضع)
@@ -80,7 +80,7 @@ async def fetch_image_cached(item_id, retries=2):
 
 async def fetch_player_info(uid):
     try:
-        resp = await client.get(f"{PLAYER_INFO_URL}?uid={uid}&key=@yashapis")
+        resp = await client.get(f"{PLAYER_INFO_URL}?uid={uid}&key=AJAY")
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
