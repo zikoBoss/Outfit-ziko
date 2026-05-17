@@ -80,7 +80,7 @@ async def fetch_image_cached(item_id, retries=2):
 
 async def fetch_player_info(uid):
     try:
-        resp = await client.get(f"{INFO_API_URL}?uid={uid}&key=@yashapis")
+        resp = await client.get(f"{PLAYER_INFO_URL}?uid={uid}&key=@yashapis")
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
