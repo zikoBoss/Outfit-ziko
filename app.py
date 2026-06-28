@@ -8,7 +8,6 @@ import asyncio
 import time
 import logging
 
-# إعداد التسجيل
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -17,24 +16,22 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 API_KEY = "ziko"
 BACKGROUND_FILENAME = "outfit.png"
-IMAGE_TIMEOUT = 20.0  # مهلة أطول
-PLAYER_INFO_URL = "https://ajay-new-all-region-info-api.vercel.app/ajay-info"
+IMAGE_TIMEOUT = 20.0
+PLAYER_INFO_URL = "https://info.killersharmabot.online/player-info"
 ICON_API_BASE = "https://iconapi.wasmer.app/"
 
-# 6 بادئات للملابس (تم تقليصها لتتناسب مع 6 مواضع)
 REQUIRED_STARTS = ["211", "214", "208", "203", "204", "205"]
 FALLBACK_IDS = ["211000000", "214000000", "208000000", "203000000", "204000000", "205000000"]
 
-# المواضع الثمانية (6 ملابس + حيوان + سلاح)
 POSITIONS = [
-    (350, 30),    # 211
-    (575, 130),   # 214
-    (665, 350),   # 208
-    (575, 550),   # 203
-    (350, 654),   # 204
-    (135, 570),   # 205
-    (47, 340),    # pet
-    (135, 130)    # weapon
+    (350, 30),
+    (575, 130),
+    (665, 350),
+    (575, 550),
+    (350, 654),
+    (135, 570),
+    (47, 340),
+    (135, 130)
 ]
 
 client = httpx.AsyncClient(
@@ -43,10 +40,9 @@ client = httpx.AsyncClient(
     follow_redirects=True
 )
 
-# كاش: نجاح طويل، فشل قصير جدًا
 image_cache = {}
-CACHE_TTL_SUCCESS = 600   # 10 دقائق
-CACHE_TTL_FAIL = 5        # 5 ثوان فقط
+CACHE_TTL_SUCCESS = 600
+CACHE_TTL_FAIL = 5
 
 async def fetch_image_cached(item_id, retries=2):
     if not item_id:
@@ -58,7 +54,6 @@ async def fetch_image_cached(item_id, retries=2):
         ttl = CACHE_TTL_SUCCESS if entry["success"] else CACHE_TTL_FAIL
         if now - entry["ts"] < ttl:
             return entry["img"]
-    # محاولة الجلب مع إعادة المحاولة
     for attempt in range(retries + 1):
         try:
             url = f"{ICON_API_BASE}{item_id}"
@@ -80,7 +75,7 @@ async def fetch_image_cached(item_id, retries=2):
 
 async def fetch_player_info(uid):
     try:
-        resp = await client.get(f"{PLAYER_INFO_URL}?uid={uid}&key=AJAY")
+        resp = await client.get(f"{PLAYER_INFO_URL}?uid={uid}")
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -106,7 +101,6 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     if not data:
         raise HTTPException(500, "Player info fetch failed")
 
-    # استخراج قطع الملابس باستخدام البادئات
     outfit_ids = data.get("profileInfo", {}).get("clothes", [])
     used_ids = set()
     selected_clothes = []
@@ -133,7 +127,6 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     while len(item_ids) < 8:
         item_ids.append(None)
 
-    # جلب الصور مع إعادة المحاولة، واستخدام return_exceptions=True
     tasks = [fetch_image_cached(iid, retries=2) for iid in item_ids]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
