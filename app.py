@@ -23,17 +23,15 @@ ICON_API_BASE = "https://iconapi.wasmer.app/"
 REQUIRED_STARTS = ["211", "214", "208", "203", "204", "205"]
 FALLBACK_IDS = ["211000000", "214000000", "208000000", "203000000", "204000000", "205000000"]
 
-# إحداثيات العناصر (الآن 9 عناصر)
 POSITIONS = [
-    (350, 30),    # 0: Head
-    (575, 130),   # 1: Facepaint
-    (665, 350),   # 2: Back
-    (575, 550),   # 3: Bottom
-    (350, 654),   # 4: Top
-    (135, 570),   # 5: Default
-    (47, 340),    # 6: Pet
-    (390, 360),   # 7: Weapon (المنتصف تقريباً)
-    (135, 130)    # 8: Animation (الحركة - مكان السلاح القديم)
+    (350, 30),
+    (575, 130),
+    (665, 350),
+    (575, 550),
+    (350, 654),
+    (135, 570),
+    (47, 340),
+    (135, 130)
 ]
 
 client = httpx.AsyncClient(
@@ -46,12 +44,11 @@ image_cache = {}
 CACHE_TTL_SUCCESS = 600
 CACHE_TTL_FAIL = 5
 
-async def fetch_image_cached(item_id, retries=2, new_size=(150, 150)):
+async def fetch_image_cached(item_id, retries=2):
     if not item_id:
         return None
     now = time.time()
-    size_key = f"_{new_size[0]}x{new_size[1]}" if new_size else "_original"
-    key = str(item_id) + size_key
+    key = str(item_id)
     if key in image_cache:
         entry = image_cache[key]
         ttl = CACHE_TTL_SUCCESS if entry["success"] else CACHE_TTL_FAIL
@@ -64,8 +61,7 @@ async def fetch_image_cached(item_id, retries=2, new_size=(150, 150)):
             resp = await client.get(url)
             resp.raise_for_status()
             img = Image.open(BytesIO(resp.content)).convert("RGBA")
-            if new_size:
-                img = img.resize(new_size, Image.LANCZOS)
+            img = img.resize((150, 150), Image.LANCZOS)
             image_cache[key] = {"img": img, "ts": now, "success": True}
             logger.info(f"Success {item_id}")
             return img
@@ -127,46 +123,20 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     weapon_list = data.get("basicInfo", {}).get("weaponSkinShows", [])
     weapon_id = weapon_list[0] if weapon_list else None
 
-    # جلب معرف الحركة (Animation)
-    animation_id = data.get("basicInfo", {}).get("equippedAnimationId")
-
-    # الآن 9 عناصر: 6 ملابس + حيوان + سلاح + حركة
-    item_ids = selected_clothes + [pet_id, weapon_id, animation_id]
-    # نتأكد من الطول 9
-    while len(item_ids) < 9:
+    item_ids = selected_clothes + [pet_id, weapon_id]
+    while len(item_ids) < 8:
         item_ids.append(None)
 
-    # إعداد المهام
-    tasks = []
-    for idx, iid in enumerate(item_ids):
-        if iid is None:
-            tasks.append(asyncio.sleep(0, result=None))
-        elif idx == 7:  # السلاح (معالجة خاصة للحفاظ على النسبة)
-            tasks.append(fetch_image_cached(iid, retries=2, new_size=None))
-        else:
-            # جميع العناصر الأخرى (بما فيها الحركة) بحجم 150×150
-            tasks.append(fetch_image_cached(iid, retries=2, new_size=(150, 150)))
-
+    tasks = [fetch_image_cached(iid, retries=2) for iid in item_ids]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     images = []
-    for idx, res in enumerate(results):
+    for res in results:
         if isinstance(res, Exception) or res is None:
             images.append(None)
         else:
-            if idx == 7:  # معالجة السلاح
-                img = res
-                target_height = 150
-                aspect = img.width / img.height
-                new_width = int(target_height * aspect)
-                # اختياري: حد أقصى للعرض لتجنب التداخل
-                # new_width = min(new_width, 250)
-                img_resized = img.resize((new_width, target_height), Image.LANCZOS)
-                images.append(img_resized)
-            else:
-                images.append(res)
+            images.append(res)
 
-    # لصق الصور على الخلفية
     canvas = background.copy()
     for idx, img in enumerate(images):
         if img and idx < len(POSITIONS):
