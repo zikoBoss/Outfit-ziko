@@ -31,7 +31,7 @@ POSITIONS = [
     (350, 654),
     (135, 570),
     (47, 340),
-    (135, 130)
+    (135, 110)
 ]
 
 client = httpx.AsyncClient(
