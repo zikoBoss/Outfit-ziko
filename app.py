@@ -44,11 +44,18 @@ image_cache = {}
 CACHE_TTL_SUCCESS = 600
 CACHE_TTL_FAIL = 5
 
-async def fetch_image_cached(item_id, retries=2):
+async def fetch_image_cached(item_id, retries=2, new_size=(150, 150)):
+    """
+    تحميل الصورة من الـ API مع تخزين مؤقت.
+    new_size: إذا كان None، تُرجع الصورة بحجمها الأصلي دون تغيير.
+             وإلا تُعيد تحجيمها إلى الأبعاد المحددة.
+    """
     if not item_id:
         return None
     now = time.time()
-    key = str(item_id)
+    # نضيف الحجم إلى المفتاح لضمان عدم خلط الأحجام في الكاش
+    size_key = f"_{new_size[0]}x{new_size[1]}" if new_size else "_original"
+    key = str(item_id) + size_key
     if key in image_cache:
         entry = image_cache[key]
         ttl = CACHE_TTL_SUCCESS if entry["success"] else CACHE_TTL_FAIL
@@ -61,7 +68,9 @@ async def fetch_image_cached(item_id, retries=2):
             resp = await client.get(url)
             resp.raise_for_status()
             img = Image.open(BytesIO(resp.content)).convert("RGBA")
-            img = img.resize((150, 150), Image.LANCZOS)
+            if new_size:
+                img = img.resize(new_size, Image.LANCZOS)
+            # إذا كان new_size = None، نبقي الصورة الأصلية
             image_cache[key] = {"img": img, "ts": now, "success": True}
             logger.info(f"Success {item_id}")
             return img
@@ -127,16 +136,38 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     while len(item_ids) < 8:
         item_ids.append(None)
 
-    tasks = [fetch_image_cached(iid, retries=2) for iid in item_ids]
+    # إعداد المهام: كل العناصر بحجم 150×150، ما عدا السلاح (المؤشر 7) نحضره بحجمه الأصلي
+    tasks = []
+    for idx, iid in enumerate(item_ids):
+        if iid is None:
+            tasks.append(asyncio.sleep(0, result=None))  # placeholder
+        elif idx == 7:  # السلاح
+            tasks.append(fetch_image_cached(iid, retries=2, new_size=None))
+        else:
+            tasks.append(fetch_image_cached(iid, retries=2, new_size=(150, 150)))
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     images = []
-    for res in results:
+    for idx, res in enumerate(results):
         if isinstance(res, Exception) or res is None:
             images.append(None)
         else:
-            images.append(res)
+            if idx == 7:
+                # معالجة خاصة للسلاح: الحفاظ على النسبة الأصلية
+                img = res
+                target_height = 150
+                # نسبة العرض إلى الارتفاع
+                aspect = img.width / img.height
+                new_width = int(target_height * aspect)
+                # (اختياري) يمكنك وضع حد أقصى للعرض حتى لا يتداخل مع الصور المجاورة
+                # new_width = min(new_width, 250)
+                img_resized = img.resize((new_width, target_height), Image.LANCZOS)
+                images.append(img_resized)
+            else:
+                images.append(res)
 
+    # لصق الصور على الخلفية
     canvas = background.copy()
     for idx, img in enumerate(images):
         if img and idx < len(POSITIONS):
