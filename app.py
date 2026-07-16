@@ -1,4 +1,5 @@
 import os
+import uvicorn
 from io import BytesIO
 from fastapi import FastAPI, Response, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,15 +24,17 @@ ICON_API_BASE = "https://iconapi.wasmer.app/"
 REQUIRED_STARTS = ["211", "214", "208", "203", "204", "205"]
 FALLBACK_IDS = ["211000000", "214000000", "208000000", "203000000", "204000000", "205000000"]
 
+# إحداثيات العناصر (تم التحديث بدقة)
 POSITIONS = [
-    (350, 30),
-    (575, 130),
-    (665, 350),
-    (575, 550),
-    (350, 654),
-    (135, 570),
-    (47, 340),
-    (135, 130)
+    (350, 30),    # 0: Head
+    (555, 130),   # 1: Facepaint
+    (685, 310),   # 2: Back
+    (555, 550),   # 3: Bottom
+    (360, 654),   # 4: Top
+    (165, 560),   # 5: Default
+    (40, 310),    # 6: Pet
+    (209, 360),   # 7: Weapon
+    (160, 130)    # 8: Animation
 ]
 
 client = httpx.AsyncClient(
@@ -44,11 +47,12 @@ image_cache = {}
 CACHE_TTL_SUCCESS = 600
 CACHE_TTL_FAIL = 5
 
-async def fetch_image_cached(item_id, retries=2):
+async def fetch_image_cached(item_id, retries=2, new_size=(150, 150)):
     if not item_id:
         return None
     now = time.time()
-    key = str(item_id)
+    size_key = f"_{new_size[0]}x{new_size[1]}" if new_size else "_original"
+    key = str(item_id) + size_key
     if key in image_cache:
         entry = image_cache[key]
         ttl = CACHE_TTL_SUCCESS if entry["success"] else CACHE_TTL_FAIL
@@ -61,7 +65,8 @@ async def fetch_image_cached(item_id, retries=2):
             resp = await client.get(url)
             resp.raise_for_status()
             img = Image.open(BytesIO(resp.content)).convert("RGBA")
-            img = img.resize((150, 150), Image.LANCZOS)
+            if new_size:
+                img = img.resize(new_size, Image.LANCZOS)
             image_cache[key] = {"img": img, "ts": now, "success": True}
             logger.info(f"Success {item_id}")
             return img
@@ -123,19 +128,37 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
     weapon_list = data.get("basicInfo", {}).get("weaponSkinShows", [])
     weapon_id = weapon_list[0] if weapon_list else None
 
-    item_ids = selected_clothes + [pet_id, weapon_id]
-    while len(item_ids) < 8:
+    animation_id = data.get("basicInfo", {}).get("equippedAnimationId")
+
+    item_ids = selected_clothes + [pet_id, weapon_id, animation_id]
+    while len(item_ids) < 9:
         item_ids.append(None)
 
-    tasks = [fetch_image_cached(iid, retries=2) for iid in item_ids]
+    tasks = []
+    for idx, iid in enumerate(item_ids):
+        if iid is None:
+            tasks.append(asyncio.sleep(0, result=None))
+        elif idx == 7:
+            tasks.append(fetch_image_cached(iid, retries=2, new_size=None))
+        else:
+            tasks.append(fetch_image_cached(iid, retries=2, new_size=(150, 150)))
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     images = []
-    for res in results:
+    for idx, res in enumerate(results):
         if isinstance(res, Exception) or res is None:
             images.append(None)
         else:
-            images.append(res)
+            if idx == 7:
+                img = res
+                target_height = 150
+                aspect = img.width / img.height
+                new_width = int(target_height * aspect)
+                img_resized = img.resize((new_width, target_height), Image.LANCZOS)
+                images.append(img_resized)
+            else:
+                images.append(res)
 
     canvas = background.copy()
     for idx, img in enumerate(images):
@@ -151,3 +174,6 @@ async def generate_outfit(uid: str = Query(...), key: str = Query(...)):
 @app.on_event("shutdown")
 async def shutdown():
     await client.aclose()
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
