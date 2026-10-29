@@ -18,7 +18,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 API_KEY = "ziko"
 BACKGROUND_FILENAME = "outfit.png"
 IMAGE_TIMEOUT = 20.0
-PLAYER_INFO_URL = "https://info.killersharmabot.online/player-info"
+PLAYER_INFO_URL = "https://mahir-info-api.vercel.app/info"
 ICON_API_BASE = "https://iconapi.wasmer.app/"
 
 REQUIRED_STARTS = ["211", "214", "208", "203", "204", "205"]
