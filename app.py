@@ -23,11 +23,13 @@ app.add_middleware(
 
 API_KEY = "ziko"
 BACKGROUND_FILENAME = "outfit.png"
-IMAGE_TIMEOUT = 20.0
+IMAGE_TIMEOUT = 60.0  # Render free tier cold start can take ~50s
 
 # API الجديد
 PLAYER_INFO_URL = "https://api-info-by-xalinas-12.vercel.app/player-info"
-ICON_API_BASE = "https://iconapi.wasmer.app/"
+# iconapi.wasmer.app is dead (HTTP 402 payment required for every id),
+# so icons come from the same icon API the banner project already uses.
+ICON_API_BASE = "https://mafu-icon-api.onrender.com/icon?key=MAFU&item_id="
 
 REQUIRED_STARTS = ["211", "214", "208", "203", "204", "205"]
 FALLBACK_IDS = [
@@ -62,7 +64,7 @@ CACHE_TTL_SUCCESS = 600
 CACHE_TTL_FAIL = 5
 
 
-async def fetch_image_cached(item_id, retries=2, new_size=(150, 150)):
+async def fetch_image_cached(item_id, retries=3, new_size=(150, 150)):
     if not item_id:
         return None
 
@@ -107,6 +109,12 @@ async def fetch_image_cached(item_id, retries=2, new_size=(150, 150)):
             return img
 
         except Exception as e:
+            status = getattr(
+                getattr(e, "response", None),
+                "status_code",
+                None
+            )
+
             logger.warning(
                 "Failed %s attempt %s: %s",
                 item_id,
@@ -114,15 +122,18 @@ async def fetch_image_cached(item_id, retries=2, new_size=(150, 150)):
                 e
             )
 
-            if attempt < retries:
-                await asyncio.sleep(0.5)
-            else:
+            # 404 means the icon does not exist: retrying is pointless.
+            if status == 404 or attempt >= retries:
                 image_cache[key] = {
                     "img": None,
                     "ts": time.time(),
                     "success": False
                 }
                 return None
+
+            # The icon API sleeps on Render's free tier and answers 502
+            # while waking up: wait longer between attempts.
+            await asyncio.sleep(8 * (attempt + 1))
 
 
 async def fetch_player_info(uid):
@@ -274,7 +285,7 @@ async def generate_outfit(
             tasks.append(
                 fetch_image_cached(
                     item_id,
-                    retries=2,
+                    retries=3,
                     new_size=None
                 )
             )
@@ -282,7 +293,7 @@ async def generate_outfit(
             tasks.append(
                 fetch_image_cached(
                     item_id,
-                    retries=2,
+                    retries=3,
                     new_size=(150, 150)
                 )
             )
