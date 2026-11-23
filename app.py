@@ -26,7 +26,7 @@ BACKGROUND_FILENAME = "outfit.png"
 IMAGE_TIMEOUT = 20.0
 
 # API الجديد
-PLAYER_INFO_URL = "https://mahir-info-api.vercel.app/info"
+PLAYER_INFO_URL = "https://api-info-by-xalinas-12.vercel.app/player-info"
 ICON_API_BASE = "https://iconapi.wasmer.app/"
 
 REQUIRED_STARTS = ["211", "214", "208", "203", "204", "205"]
@@ -171,7 +171,12 @@ def extract_outfit_ids(data):
     profile_info = data.get("profileInfo") or {}
 
     clothes = profile_info.get("clothes") or []
-    equipped_skills = profile_info.get("equipedSkills") or []
+    # الـ API الجديد يرسل equippedSkills (بتهجئة صحيحة)؛ القديم كان يرسل equipedSkills
+    equipped_skills = (
+        profile_info.get("equippedSkills")
+        or profile_info.get("equipedSkills")
+        or []
+    )
 
     def match_items(source):
         used_ids = set()
