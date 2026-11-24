@@ -275,38 +275,33 @@ async def generate_outfit(
     while len(item_ids) < 9:
         item_ids.append(None)
 
-    tasks = []
+    # Fetch icons one by one, not 9 at once: the icon API is a small
+    # free Render service and a burst of 9 concurrent requests makes it
+    # fail (502/timeout) while sequential requests succeed — the banner
+    # fetches sequentially and works. After the deadline, each remaining
+    # icon is tried only once so a woken service still fills every slot
+    # without blowing the request time budget.
+    fetch_deadline = time.monotonic() + 45
+    images = []
 
     for idx, item_id in enumerate(item_ids):
         if item_id is None:
-            tasks.append(asyncio.sleep(0, result=None))
-        elif idx == 7:
-            # السلاح يُحمّل بحجمه الأصلي
-            tasks.append(
-                fetch_image_cached(
-                    item_id,
-                    retries=3,
-                    new_size=None
-                )
+            images.append(None)
+            continue
+
+        retries = 3 if time.monotonic() <= fetch_deadline else 0
+        size = None if idx == 7 else (150, 150)
+
+        try:
+            result = await fetch_image_cached(
+                item_id,
+                retries=retries,
+                new_size=size
             )
-        else:
-            tasks.append(
-                fetch_image_cached(
-                    item_id,
-                    retries=3,
-                    new_size=(150, 150)
-                )
-            )
+        except Exception:
+            result = None
 
-    results = await asyncio.gather(
-        *tasks,
-        return_exceptions=True
-    )
-
-    images = []
-
-    for idx, result in enumerate(results):
-        if isinstance(result, Exception) or result is None:
+        if result is None:
             images.append(None)
             continue
 
@@ -316,11 +311,12 @@ async def generate_outfit(
             aspect = img.width / img.height
             new_width = int(target_height * aspect)
 
-            img_resized = img.resize(
-                (new_width, target_height),
-                Image.LANCZOS
+            images.append(
+                img.resize(
+                    (new_width, target_height),
+                    Image.LANCZOS
+                )
             )
-            images.append(img_resized)
         else:
             images.append(result)
 
@@ -338,7 +334,9 @@ async def generate_outfit(
     return Response(
         content=output.getvalue(),
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=300"}
+        # No edge caching: the image depends on live player data and a
+        # cached empty/error image would be served stale for minutes.
+        headers={"Cache-Control": "no-store"}
     )
 
 
